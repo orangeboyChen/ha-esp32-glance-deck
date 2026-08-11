@@ -1,0 +1,26 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Home Assistant integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run pytest
+      - run: uv run python -m compileall -q custom_components
+      - run: uv run python -m json.tool custom_components/glance_deck/manifest.json > /dev/null
+      - run: uv run python -m json.tool custom_components/glance_deck/strings.json > /dev/null
+      - run: uv run python -m json.tool custom_components/glance_deck/translations/en.json > /dev/null
