@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import logging
 from typing import Any
@@ -24,6 +25,13 @@ class GlanceDeckCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         )
         self.api = api
 
+    async def _async_device_details(self, device_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        display, pages = await asyncio.gather(
+            self.api.async_get_display(device_id),
+            self.api.async_get_device_pages(device_id),
+        )
+        return display, pages
+
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         try:
             devices = await self.api.async_get_devices()
@@ -34,13 +42,28 @@ class GlanceDeckCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 for device_id in alert.get("device_ids", []):
                     if isinstance(device_id, str):
                         active_alerts.setdefault(device_id, []).append(alert)
+            # Fetch every device's display and page configuration concurrently. Awaiting them one
+            # device at a time makes each refresh 2N sequential round trips, so a modest number of
+            # devices pushes the poll past its own interval.
+            tracked = [device for device in devices if isinstance(device.get("id"), str)]
+            details = await asyncio.gather(
+                *(
+                    self._async_device_details(str(device["id"]))
+                    for device in tracked
+                ),
+                return_exceptions=True,
+            )
             result: dict[str, dict[str, Any]] = {}
-            for device in devices:
-                device_id = device.get("id")
-                if not isinstance(device_id, str):
+            for device, detail in zip(tracked, details, strict=True):
+                device_id = str(device["id"])
+                if isinstance(detail, BaseException):
+                    # One unreachable device must not drop every other device from the update.
+                    if isinstance(detail, GlanceDeckApiError):
+                        self.logger.warning("Glance Deck device %s update failed: %s", device_id, detail)
+                    else:
+                        raise detail
                     continue
-                display = await self.api.async_get_display(device_id)
-                pages = await self.api.async_get_device_pages(device_id)
+                display, pages = detail
                 result[device_id] = {**device, "display": display, "page_configuration": pages}
                 if active_alerts.get(device_id):
                     result[device_id]["active_alerts"] = active_alerts[device_id]
