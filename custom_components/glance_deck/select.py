@@ -41,5 +41,9 @@ class GlanceDeckPageSelect(GlanceDeckEntity, SelectEntity):
         return options or ([self.current_option] if self.current_option else [])
 
     async def async_select_option(self, option: str) -> None:
+        # The service and UI both route here, so validate against the live option list: an
+        # unvalidated page id would be forwarded straight to the device as a show_page command.
+        if option not in self.options:
+            raise ValueError(f"Unknown page: {option}")
         await self.coordinator.api.async_command(self.device_id, "show_page", {"page_id": option})
         await self.coordinator.async_request_refresh()

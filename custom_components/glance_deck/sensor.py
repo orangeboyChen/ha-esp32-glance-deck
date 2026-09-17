@@ -27,6 +27,20 @@ SENSORS: tuple[tuple[str, str | None], ...] = (
 )
 
 
+def _parse_timestamp(value: object) -> datetime | None:
+    """Parse an ISO-8601 timestamp, returning None instead of raising.
+
+    These values come from the control plane and are rendered inside entity state attributes, so a
+    malformed string must not propagate a ValueError into Home Assistant's state machine.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: GlanceDeckCoordinator = entry.runtime_data
     added: set[str] = set()
@@ -67,16 +81,14 @@ class GlanceDeckSensor(GlanceDeckEntity, SensorEntity):
                 return round(used / total * 100, 1)
             return None
         if self.key == "reset_time":
-            value = values.get("resets_at")
-            return datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else None
+            return _parse_timestamp(values.get("resets_at"))
         if self.key == "source_values":
             source = self.device.get("display", {}).get("source", {})
             values = source.get("values") if isinstance(source, dict) else None
             return "available" if isinstance(values, dict) and values else None
-        value = self.device.get(self.key)
-        if self.key in ("last_seen_at", "power_updated_at") and isinstance(value, str):
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return value
+        if self.key in ("last_seen_at", "power_updated_at"):
+            return _parse_timestamp(self.device.get(self.key))
+        return self.device.get(self.key)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

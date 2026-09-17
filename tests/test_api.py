@@ -19,7 +19,13 @@ async def server() -> str:
         return web.json_response({"version": 1})
 
     async def alerts(_request: web.Request) -> web.Response:
-        return web.json_response({"active": [{"id": "alert-1", "device_ids": ["deck-a"]}]})
+        # Mirrors the control plane: every rule is listed, only firing ones carry active=true.
+        return web.json_response({
+            "rules": [
+                {"id": "alert-1", "device_ids": ["deck-a"], "active": True},
+                {"id": "alert-2", "device_ids": ["deck-a"], "active": False},
+            ]
+        })
 
     async def pages(_request: web.Request) -> web.Response:
         return web.json_response({"enabled_page_ids": ["usage", "alerts"]})
@@ -51,7 +57,8 @@ async def test_client_reads_devices_and_writes_commands(server: str) -> None:
     async with ClientSession() as session:
         client = GlanceDeckApiClient(session, server, "valid")
         assert await client.async_get_devices() == [{"id": "deck-a"}]
-        assert await client.async_get_alerts() == [{"id": "alert-1", "device_ids": ["deck-a"]}]
+        # Only the firing rule is returned; the inactive one is filtered out.
+        assert await client.async_get_alerts() == [{"id": "alert-1", "device_ids": ["deck-a"], "active": True}]
         assert await client.async_get_display("deck-a") == {"version": 1}
         assert await client.async_get_device_pages("deck-a") == {"enabled_page_ids": ["usage", "alerts"]}
         assert (await client.async_command("deck-a", "next_page"))["action"] == "next_page"
