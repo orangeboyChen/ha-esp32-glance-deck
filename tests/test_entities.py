@@ -76,6 +76,28 @@ def test_sensor_values_and_page_selection() -> None:
     assert page_select.options == ["usage", "alerts"]
 
 
+def test_malformed_timestamps_render_as_unknown_instead_of_raising() -> None:
+    """A bad timestamp from the control plane must not raise inside the state machine."""
+    coordinator = FakeCoordinator()
+    device = coordinator.data["deck-a"]
+    for key in ("last_seen_at", "power_updated_at"):
+        device[key] = "not-a-timestamp"
+        assert GlanceDeckSensor(coordinator, "deck-a", key, None).native_value is None
+    device["display"]["source"]["values"]["resets_at"] = "2026-13-45T99:99:99Z"
+    assert GlanceDeckSensor(coordinator, "deck-a", "reset_time", None).native_value is None
+    device["last_seen_at"] = 17
+    assert GlanceDeckSensor(coordinator, "deck-a", "last_seen_at", None).native_value is None
+
+
+@pytest.mark.asyncio
+async def test_selecting_an_unknown_page_is_rejected() -> None:
+    coordinator = FakeCoordinator()
+    page_select = GlanceDeckPageSelect(coordinator, "deck-a")
+    with pytest.raises(ValueError):
+        await page_select.async_select_option("not-a-page")
+    coordinator.api.async_command.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_entities_send_commands_and_start_updates() -> None:
     coordinator = FakeCoordinator()

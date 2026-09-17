@@ -37,11 +37,16 @@ class GlanceDeckApiClient:
         return [device for device in devices if isinstance(device, dict)]
 
     async def async_get_alerts(self) -> list[dict[str, Any]]:
+        """Return the currently firing alert rules.
+
+        The control plane lists every rule under ``rules`` and marks the firing ones with an
+        ``active`` flag, so filter here rather than expecting a pre-filtered list.
+        """
         response = await self._async_request("GET", "/api/v1/alerts")
-        alerts = response.get("active") if isinstance(response, dict) else None
-        if not isinstance(alerts, list):
+        rules = response.get("rules") if isinstance(response, dict) else None
+        if not isinstance(rules, list):
             return []
-        return [alert for alert in alerts if isinstance(alert, dict)]
+        return [rule for rule in rules if isinstance(rule, dict) and rule.get("active") is True]
 
     async def async_get_display(self, device_id: str) -> dict[str, Any]:
         response = await self._async_request("GET", f"/api/v1/displays/{device_id}", allow_not_found=True)

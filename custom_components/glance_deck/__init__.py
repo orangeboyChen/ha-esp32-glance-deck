@@ -48,7 +48,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: GlanceDeckConfigEntry) -
 
 async def async_unload_entry(hass: HomeAssistant, entry: GlanceDeckConfigEntry) -> bool:
     """Unload the integration."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        # The device services iterate every config entry, so leaving them registered would keep
+        # calling into this entry's coordinator after it has been torn down. Only drop them once no
+        # entry is left; otherwise a reload would silently lose the service for the surviving ones.
+        remaining = [item for item in hass.config_entries.async_entries(DOMAIN) if item.entry_id != entry.entry_id]
+        if not remaining:
+            _async_remove_services(hass)
+    return unloaded
+
+
+def _async_remove_services(hass: HomeAssistant) -> None:
+    for service in (SERVICE_SHOW_PAGE, SERVICE_REFRESH_DEVICE, SERVICE_START_OTA):
+        if hass.services.has_service(DOMAIN, service):
+            hass.services.async_remove(DOMAIN, service)
 
 
 def _async_register_services(hass: HomeAssistant) -> None:
