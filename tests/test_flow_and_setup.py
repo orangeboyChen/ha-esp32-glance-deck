@@ -23,6 +23,9 @@ class FakeServices:
     def async_register(self, domain, service, handler, schema=None):
         self.registered[(domain, service)] = handler
 
+    def async_remove(self, domain, service):
+        self.registered.pop((domain, service), None)
+
 
 class FakeHass:
     def __init__(self) -> None:
@@ -79,3 +82,39 @@ async def test_setup_preview_and_services(monkeypatch) -> None:
     hass.config_entries.async_get_entry.return_value = SimpleNamespace(domain=DOMAIN, runtime_data=coordinator)
     assert (await view.get(SimpleNamespace(), "entry-a", "deck-a")).body == b"svg"
     assert await integration.async_unload_entry(hass, entry) is True
+    # The services iterate every config entry, so they must not outlive the last one.
+    for service in (SERVICE_SHOW_PAGE, SERVICE_REFRESH_DEVICE, SERVICE_START_OTA):
+        assert not hass.services.has_service(DOMAIN, service)
+
+
+@pytest.mark.asyncio
+async def test_unload_keeps_services_while_another_entry_remains(monkeypatch) -> None:
+    hass = FakeHass()
+    api = SimpleNamespace(async_command=AsyncMock(), async_start_ota=AsyncMock(), async_get_preview=AsyncMock(return_value=(b"svg", "image/svg+xml")))
+    coordinator = SimpleNamespace(api=api, data={"deck-a": {"id": "deck-a"}}, device=lambda device_id: {"id": device_id} if device_id == "deck-a" else None, async_request_refresh=AsyncMock())
+    coordinator.async_config_entry_first_refresh = AsyncMock()
+    monkeypatch.setattr(integration, "async_get_clientsession", lambda _hass: object())
+    monkeypatch.setattr(integration, "GlanceDeckCoordinator", lambda *_args: coordinator)
+    first = SimpleNamespace(data={CONF_BASE_URL: "https://deck.example", CONF_API_TOKEN: "token"}, entry_id="entry-a", runtime_data=None)
+    second = SimpleNamespace(data={CONF_BASE_URL: "https://deck.example", CONF_API_TOKEN: "token"}, entry_id="entry-b", runtime_data=None)
+    hass.entries.extend([first, second])
+    assert await integration.async_setup_entry(hass, first) is True
+    assert await integration.async_unload_entry(hass, first) is True
+    # A reload of one entry must not strip the service from the entry that is still loaded.
+    for service in (SERVICE_SHOW_PAGE, SERVICE_REFRESH_DEVICE, SERVICE_START_OTA):
+        assert hass.services.has_service(DOMAIN, service)
+
+
+@pytest.mark.asyncio
+async def test_unload_failure_keeps_services(monkeypatch) -> None:
+    hass = FakeHass()
+    coordinator = SimpleNamespace(api=SimpleNamespace(), data={}, device=lambda _device_id: None)
+    coordinator.async_config_entry_first_refresh = AsyncMock()
+    monkeypatch.setattr(integration, "async_get_clientsession", lambda _hass: object())
+    monkeypatch.setattr(integration, "GlanceDeckCoordinator", lambda *_args: coordinator)
+    entry = SimpleNamespace(data={CONF_BASE_URL: "https://deck.example", CONF_API_TOKEN: "token"}, entry_id="entry-a", runtime_data=None)
+    hass.entries.append(entry)
+    await integration.async_setup_entry(hass, entry)
+    hass.config_entries.async_unload_platforms = AsyncMock(return_value=False)
+    assert await integration.async_unload_entry(hass, entry) is False
+    assert hass.services.has_service(DOMAIN, SERVICE_SHOW_PAGE)
